@@ -1,0 +1,5 @@
+.vscode
+
+cmd/server/server-bin
+
+.env

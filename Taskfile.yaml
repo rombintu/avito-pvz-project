@@ -1,0 +1,51 @@
+version: '3'
+
+vars:
+  migrVar: internal/storage/migrations
+
+tasks:
+
+  build:
+    cmds:
+      - go build -o cmd/server/server-bin cmd/server/main.go
+
+  mg-up:
+    cmds:
+      - migrate -path {{.migrVar}} -database $PGX_DB_PATH up
+  mg-up-1:
+    cmds:
+      - migrate -path {{.migrVar}} -database $PGX_DB_PATH up 1
+  mg-down-1:
+    cmds:
+      - migrate -path {{.migrVar}} -database $PGX_DB_PATH down 1
+  mg-drop:
+    cmds:
+      - migrate -path {{.migrVar}} -database $PGX_DB_PATH drop
+  
+  mocksgen:
+    cmds:
+      - mockgen -destination=internal/mocks/storage.go -package=mocks github.com/rombintu/avito-pvz-project/internal/storage Storage
+
+  prepush:
+    cmds:
+      - staticcheck ./...
+      - errcheck ./...
+      - go test -race ./...
+      - go test -bench=. ./...
+
+  cover-gen-svg:
+    cmds:
+      - |
+        COVERAGE=$(go tool cover -func=profiles/cover.out | grep total | awk '{print $3}' | sed 's/%//')
+        cat <<EOF > profiles/coverage.svg
+        <svg xmlns="http://www.w3.org/2000/svg" width="100" height="20">
+          <rect width="100" height="20" fill="#555"/>
+          <rect width="$COVERAGE" height="20" fill="#4c1"/>
+          <text x="5" y="15" fill="#fff" font-family="Arial, sans-serif" font-size="12">$COVERAGE%</text>
+        </svg>
+        EOF
+
+  cover:
+    cmds:
+      - go test ./... -coverprofile profiles/cover.out && go tool cover -func=profiles/cover.out
+      - task: cover-gen-svg
