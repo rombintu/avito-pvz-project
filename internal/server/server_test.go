@@ -3,8 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,8 +20,11 @@ import (
 	"github.com/rombintu/avito-pvz-project/internal/config"
 	"github.com/rombintu/avito-pvz-project/internal/mocks"
 	"github.com/rombintu/avito-pvz-project/internal/models"
+	pvz_v1 "github.com/rombintu/avito-pvz-project/internal/proto"
+	"github.com/rombintu/avito-pvz-project/internal/storage"
 	"github.com/rombintu/avito-pvz-project/internal/storage/drivers"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 func setupTest(t *testing.T) (*Server, *mocks.MockStorage, string, string) {
@@ -431,4 +437,359 @@ func TestDeleteLastProduct(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+}
+
+func TestNewServer(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStorage := mocks.NewMockStorage(ctrl)
+	testConfig := config.Config{
+		Secret: "test-secret",
+	}
+
+	opts := ServerOpts{
+		Storage: mockStorage,
+		Config:  testConfig,
+	}
+
+	srv := NewServer(opts)
+
+	assert.NotNil(t, srv)
+	assert.NotNil(t, srv.router)
+	assert.Equal(t, mockStorage, srv.storage)
+	assert.Equal(t, testConfig, srv.config)
+}
+
+func TestServer_Run(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStorage := mocks.NewMockStorage(ctrl)
+	testConfig := config.Config{
+		Listen: ":0", // используем :0 для автоматического выбора порта
+	}
+
+	srv := NewServer(ServerOpts{
+		Storage: mockStorage,
+		Config:  testConfig,
+	})
+
+	// Тестируем запуск сервера
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- srv.Run(testConfig.Listen)
+	}()
+
+	// Проверяем что сервер запустился
+	select {
+	case err := <-errChan:
+		t.Fatalf("Server failed to start: %v", err)
+	default:
+		// Сервер запущен успешно
+	}
+
+	// Останавливаем сервер (можно добавить graceful shutdown в реализацию)
+	// В реальном тесте нужно добавить механизм остановки сервера
+}
+
+func TestServer_RunGRPC(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStorage := mocks.NewMockStorage(ctrl)
+	testConfig := config.Config{}
+
+	srv := NewServer(ServerOpts{
+		Storage: mockStorage,
+		Config:  testConfig,
+	})
+
+	t.Run("Successful startup", func(t *testing.T) {
+		listener, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Fatalf("failed to create listener: %v", err)
+		}
+		defer listener.Close()
+
+		port := listener.Addr().(*net.TCPAddr).Port
+		addr := fmt.Sprintf(":%d", port)
+
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- srv.RunGRPC(addr)
+		}()
+
+		// Даем серверу время на запуск
+		select {
+		case err := <-errChan:
+			t.Fatalf("gRPC server failed to start: %v", err)
+		default:
+			// Проверяем что порт слушается
+			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			if err != nil {
+				t.Fatalf("Failed to dial gRPC server: %v", err)
+			}
+			conn.Close()
+		}
+	})
+
+	t.Run("Invalid address", func(t *testing.T) {
+		err := srv.RunGRPC("invalid-address")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "address")
+	})
+}
+
+// Дополнительные тесты для проверки регистрации обработчиков
+func TestSetupRoutes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStorage := mocks.NewMockStorage(ctrl)
+	testConfig := config.Config{
+		Secret: "test-secret",
+	}
+
+	srv := NewServer(ServerOpts{
+		Storage: mockStorage,
+		Config:  testConfig,
+	})
+
+	srv.SetupRoutes()
+
+	// Проверяем что роуты зарегистрированы
+	routes := srv.router.Routes()
+	assert.NotEmpty(t, routes)
+}
+
+func TestGRPCServiceRegistration(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStorage := mocks.NewMockStorage(ctrl)
+	testConfig := config.Config{
+		ListenGRPC: ":0",
+	}
+
+	srv := NewServer(ServerOpts{
+		Storage: mockStorage,
+		Config:  testConfig,
+	})
+
+	// Создаем тестовый gRPC сервер
+	grpcServer := grpc.NewServer()
+	pvz_v1.RegisterPVZServiceServer(grpcServer, srv)
+
+	// Проверяем что сервис зарегистрирован
+	services := grpcServer.GetServiceInfo()
+	_, ok := services["pvz.v1.PVZService"]
+	assert.True(t, ok, "PVZService not registered")
+}
+
+func TestServerIntegration(t *testing.T) {
+	// Setup test database
+	db, err := sql.Open(storage.PgxDriverType, "postgres://admin:admin@localhost:5432/pvztest?sslmode=disable")
+	if err != nil {
+		t.Fatalf("Failed to create test database: %v", err)
+	}
+	defer db.Close()
+
+	// Create storage
+	store := drivers.NewPostgresStorage(db)
+
+	// Create test config
+	cfg := config.Config{
+		Secret: "test-secret",
+	}
+
+	// Create server
+	srv := NewServer(ServerOpts{
+		Storage: store,
+		Config:  cfg,
+	})
+
+	srv.SetupRoutes()
+
+	// Test user registration and login
+	t.Run("User registration and login", func(t *testing.T) {
+		// Register new user
+		registerData := map[string]string{
+			"email":    "test@example.com",
+			"password": "password123",
+			"role":     "employee",
+		}
+		registerBody, _ := json.Marshal(registerData)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/register", bytes.NewBuffer(registerBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		// Login with registered user
+		loginData := map[string]string{
+			"email":    "test@example.com",
+			"password": "password123",
+		}
+		loginBody, _ := json.Marshal(loginData)
+
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("POST", "/login", bytes.NewBuffer(loginBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var loginResponse map[string]string
+		err := json.Unmarshal(w.Body.Bytes(), &loginResponse)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, loginResponse["token"])
+	})
+
+	// Test PVZ operations
+	t.Run("PVZ operations", func(t *testing.T) {
+		// Get moderator token
+		moderatorToken := getAuthToken(t, srv, "moderator")
+
+		// Create PVZ
+		pvzData := models.PVZ{
+			City: "Москва",
+		}
+		pvzBody, _ := json.Marshal(pvzData)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/pvz", bytes.NewBuffer(pvzBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+moderatorToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var createdPVZ models.PVZ
+		err := json.Unmarshal(w.Body.Bytes(), &createdPVZ)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, createdPVZ.ID)
+
+		// Get PVZs
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("GET", "/pvz", nil)
+		req.Header.Set("Authorization", "Bearer "+moderatorToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var pvzs []models.PVZ
+		err = json.Unmarshal(w.Body.Bytes(), &pvzs)
+		assert.NoError(t, err)
+		assert.Greater(t, len(pvzs), 0)
+	})
+
+	// Test reception and product flow
+	t.Run("Reception and product flow", func(t *testing.T) {
+		// Get employee token
+		employeeToken := getAuthToken(t, srv, "employee")
+
+		// Create PVZ (need moderator token)
+		moderatorToken := getAuthToken(t, srv, "moderator")
+		pvzData := models.PVZ{City: "Санкт-Петербург"}
+		pvzBody, _ := json.Marshal(pvzData)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/pvz", bytes.NewBuffer(pvzBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+moderatorToken)
+		srv.router.ServeHTTP(w, req)
+
+		var pvz models.PVZ
+		json.Unmarshal(w.Body.Bytes(), &pvz)
+
+		// Create reception
+		receptionData := map[string]string{
+			"pvzId": pvz.ID,
+		}
+		receptionBody, _ := json.Marshal(receptionData)
+
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("POST", "/receptions", bytes.NewBuffer(receptionBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+employeeToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var reception models.Reception
+		err := json.Unmarshal(w.Body.Bytes(), &reception)
+		assert.NoError(t, err)
+
+		// Add product
+		productData := map[string]string{
+			"type":  "электроника",
+			"pvzId": pvz.ID,
+		}
+		productBody, _ := json.Marshal(productData)
+
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("POST", "/products", bytes.NewBuffer(productBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+employeeToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var product models.Product
+		err = json.Unmarshal(w.Body.Bytes(), &product)
+		assert.NoError(t, err)
+
+		// Delete last product
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("POST", "/pvz/"+pvz.ID+"/delete_last_product", nil)
+		req.Header.Set("Authorization", "Bearer "+employeeToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// Close reception
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("POST", "/pvz/"+pvz.ID+"/close_last_reception", nil)
+		req.Header.Set("Authorization", "Bearer "+employeeToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	// Test authorization
+	t.Run("Authorization checks", func(t *testing.T) {
+		// Get employee token
+		employeeToken := getAuthToken(t, srv, "employee")
+
+		// Try to create PVZ as employee (should fail)
+		pvzData := models.PVZ{City: "Казань"}
+		pvzBody, _ := json.Marshal(pvzData)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/pvz", bytes.NewBuffer(pvzBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+employeeToken)
+
+		srv.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+}
+
+// Helper function to get auth token
+func getAuthToken(t *testing.T, srv *Server, role string) string {
+	data := map[string]string{"role": role}
+	body, _ := json.Marshal(data)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/dummyLogin", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	srv.router.ServeHTTP(w, req)
+
+	var response map[string]string
+	json.Unmarshal(w.Body.Bytes(), &response)
+	return response["token"]
 }

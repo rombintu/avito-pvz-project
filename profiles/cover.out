@@ -101,9 +101,9 @@ github.com/rombintu/avito-pvz-project/pkg/middleware/auth.go:25.3,26.17 2 1
 github.com/rombintu/avito-pvz-project/pkg/middleware/auth.go:26.17,29.4 2 1
 github.com/rombintu/avito-pvz-project/pkg/middleware/auth.go:31.3,32.11 2 1
 github.com/rombintu/avito-pvz-project/internal/server/server.go:37.41,43.2 1 1
-github.com/rombintu/avito-pvz-project/internal/server/server.go:45.41,48.2 2 0
-github.com/rombintu/avito-pvz-project/internal/server/server.go:50.45,52.16 2 0
-github.com/rombintu/avito-pvz-project/internal/server/server.go:52.16,54.3 1 0
+github.com/rombintu/avito-pvz-project/internal/server/server.go:45.41,48.2 2 1
+github.com/rombintu/avito-pvz-project/internal/server/server.go:50.45,52.16 2 1
+github.com/rombintu/avito-pvz-project/internal/server/server.go:52.16,54.3 1 1
 github.com/rombintu/avito-pvz-project/internal/server/server.go:55.2,57.30 3 0
 github.com/rombintu/avito-pvz-project/internal/server/server.go:60.32,69.2 6 1
 github.com/rombintu/avito-pvz-project/internal/server/server.go:69.2,76.3 6 1

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/golang-migrate/migrate"
 	"github.com/lib/pq"
 	"github.com/rombintu/avito-pvz-project/internal/models"
 )
@@ -340,4 +341,14 @@ func (s *PostgresStorage) DeleteProduct(ctx context.Context, productID string) e
 	}
 
 	return nil
+}
+
+func (s *PostgresStorage) autoDefaultMigrate(mpath string) error {
+	migr, err := migrate.New(
+		fmt.Sprintf("file://%s", mpath),
+	)
+	if err != nil {
+		return err
+	}
+	return migr.Up()
 }

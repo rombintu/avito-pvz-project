@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  migrVar: internal/storage/migrations
+  migrVar: migrations
 
 tasks:
 
@@ -11,16 +11,16 @@ tasks:
 
   mg-up:
     cmds:
-      - migrate -path {{.migrVar}} -database $PGX_DB_PATH up
+      - migrate -path {{.migrVar}} -database $DATABASE_URL up
   mg-up-1:
     cmds:
-      - migrate -path {{.migrVar}} -database $PGX_DB_PATH up 1
+      - migrate -path {{.migrVar}} -database $DATABASE_URL up 1
   mg-down-1:
     cmds:
-      - migrate -path {{.migrVar}} -database $PGX_DB_PATH down 1
+      - migrate -path {{.migrVar}} -database $DATABASE_URL down 1
   mg-drop:
     cmds:
-      - migrate -path {{.migrVar}} -database $PGX_DB_PATH drop
+      - migrate -path {{.migrVar}} -database $DATABASE_URL drop
   
   mocksgen:
     cmds:
@@ -47,7 +47,7 @@ tasks:
 
   cover:
     cmds:
-      - go test ./... -coverprofile profiles/dry_cover.out && egrep -v ".pb.go|main|mocks" profiles/dry_cover.out > profiles/cover.out && go tool cover -func=profiles/cover.out
+      - go test ./... -coverprofile profiles/dry_cover.out && egrep -v "proto|main|mocks" profiles/dry_cover.out > profiles/cover.out && go tool cover -func=profiles/cover.out
       - task: cover-gen-svg
 
   protogen:

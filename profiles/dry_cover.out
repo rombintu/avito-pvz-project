@@ -1,8 +1,13 @@
 mode: set
-github.com/rombintu/avito-pvz-project/cmd/server/main.go:13.13,16.16 3 0
-github.com/rombintu/avito-pvz-project/cmd/server/main.go:16.16,18.3 1 0
-github.com/rombintu/avito-pvz-project/cmd/server/main.go:19.2,29.47 4 0
-github.com/rombintu/avito-pvz-project/cmd/server/main.go:29.47,32.3 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:17.13,20.16 3 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:20.16,22.3 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:23.2,34.12 4 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:34.12,35.56 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:35.56,37.14 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:42.2,42.12 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:42.12,43.48 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:43.48,46.4 1 0
+github.com/rombintu/avito-pvz-project/cmd/server/main.go:49.2,54.30 4 0
 github.com/rombintu/avito-pvz-project/internal/config/config.go:12.25,17.2 3 1
 github.com/rombintu/avito-pvz-project/internal/config/config.go:19.59,21.9 2 1
 github.com/rombintu/avito-pvz-project/internal/config/config.go:21.9,23.3 1 1
@@ -316,7 +321,7 @@ github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:35.16,37.3 1
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:38.2,38.17 1 0
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:53.115,55.2 1 0
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:56.80,56.81 0 0
-github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:65.78,67.2 1 0
+github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:65.78,67.2 1 1
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:69.166,71.32 2 0
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:71.32,73.3 1 0
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:74.2,74.24 1 0
@@ -325,9 +330,9 @@ github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:77.2,81.77 2
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:81.77,83.3 1 0
 github.com/rombintu/avito-pvz-project/internal/proto/pvz_grpc.pb.go:84.2,84.44 1 0
 github.com/rombintu/avito-pvz-project/internal/server/server.go:37.41,43.2 1 1
-github.com/rombintu/avito-pvz-project/internal/server/server.go:45.41,48.2 2 0
-github.com/rombintu/avito-pvz-project/internal/server/server.go:50.45,52.16 2 0
-github.com/rombintu/avito-pvz-project/internal/server/server.go:52.16,54.3 1 0
+github.com/rombintu/avito-pvz-project/internal/server/server.go:45.41,48.2 2 1
+github.com/rombintu/avito-pvz-project/internal/server/server.go:50.45,52.16 2 1
+github.com/rombintu/avito-pvz-project/internal/server/server.go:52.16,54.3 1 1
 github.com/rombintu/avito-pvz-project/internal/server/server.go:55.2,57.30 3 0
 github.com/rombintu/avito-pvz-project/internal/server/server.go:60.32,69.2 6 1
 github.com/rombintu/avito-pvz-project/internal/server/server.go:69.2,76.3 6 1
