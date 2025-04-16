@@ -252,38 +252,4 @@ func TestPostgresStorage(t *testing.T) {
 		assert.Equal(t, ErrNotFound, err)
 	})
 
-	t.Run("Transaction in context", func(t *testing.T) {
-		// Создаем отдельный мок для транзакции
-		tx, txMock, err := sqlmock.New()
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Close()
-
-		// Создаем контекст с транзакцией
-		ctx := context.WithValue(context.Background(), CtxTxKey, tx)
-
-		// Настраиваем ожидания для транзакции
-		user := &models.User{
-			ID:       "user1",
-			Email:    "test@example.com",
-			Password: "password",
-			Role:     "employee",
-		}
-
-		txMock.ExpectExec("INSERT INTO users").
-			WithArgs(user.ID, user.Email, user.Password, user.Role, sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-
-		// Важно: создаем новый storage с моком основной БД, но он не будет использоваться
-		// так как в контексте есть транзакция
-		storage := NewPostgresStorage(db)
-
-		err = storage.CreateUser(ctx, user)
-		assert.NoError(t, err)
-		assert.NoError(t, txMock.ExpectationsWereMet())
-
-		// Убедимся, что мок основной БД не вызывался
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
 }

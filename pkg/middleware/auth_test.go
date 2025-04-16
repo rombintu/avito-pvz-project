@@ -1,14 +1,14 @@
-package middleware_test
+package middleware
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rombintu/avito-pvz-project/internal/auth"
-	"github.com/rombintu/avito-pvz-project/lib/middleware"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,7 +16,7 @@ func TestAuthMiddleware_Integration(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	secret := "test-secret"
-	middlewareFunc := middleware.AuthMiddleware(secret)
+	middlewareFunc := AuthMiddleware(secret)
 
 	tests := []struct {
 		name           string
@@ -39,37 +39,52 @@ func TestAuthMiddleware_Integration(t *testing.T) {
 			setupRequest: func() *http.Request {
 				req, _ := http.NewRequest("GET", "/", nil)
 				// Генерируем токен с истекшим сроком
-				token, _ := auth.GenerateToken("user123", auth.RoleEmployee, secret)
+				token, _ := auth.GenerateTokenWithExpiry("user123", auth.RoleEmployee, secret, -time.Hour)
 				req.Header.Set("Authorization", "Bearer "+token)
 				return req
 			},
 			expectedStatus: http.StatusUnauthorized,
 			expectedError:  "Invalid token",
 		},
+		{
+			name: "No Authorization header",
+			setupRequest: func() *http.Request {
+				req, _ := http.NewRequest("GET", "/", nil)
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			expectedError:  "Authorization header is required",
+		},
+		{
+			name: "Invalid token format",
+			setupRequest: func() *http.Request {
+				req, _ := http.NewRequest("GET", "/", nil)
+				req.Header.Set("Authorization", "InvalidTokenFormat")
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			expectedError:  "Bearer token not found",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Создаем тестовый роутер Gin
 			router := gin.New()
 			router.GET("/", middlewareFunc, func(c *gin.Context) {
-				// Проверяем, что claims установлены в контексте
-				_, exists := c.Get("claims")
-				assert.True(t, exists)
+				if tt.expectedStatus == http.StatusOK {
+					_, exists := c.Get("claims")
+					assert.True(t, exists)
+				}
 				c.Status(http.StatusOK)
 			})
 
-			// Создаем запрос
 			req := tt.setupRequest()
 			w := httptest.NewRecorder()
 
-			// Выполняем запрос
 			router.ServeHTTP(w, req)
 
-			// Проверяем статус код
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
-			// Если ожидается ошибка, проверяем тело ответа
 			if tt.expectedError != "" {
 				var response map[string]string
 				err := json.Unmarshal(w.Body.Bytes(), &response)

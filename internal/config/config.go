@@ -3,9 +3,10 @@ package config
 import "os"
 
 type Config struct {
-	Listen string
-	Secret string
-	DbPath string
+	Listen     string
+	ListenGRPC string
+	Secret     string
+	DbPath     string
 }
 
 func NewConfig() Config {
@@ -25,6 +26,7 @@ func GetOrDefault(key string, defaultValue string) string {
 
 func (c *Config) LoadEnv() {
 	c.Listen = GetOrDefault("SERVER_ADDRESS", ":8080")
+	c.ListenGRPC = GetOrDefault("SERVER_GRPC_ADDRESS", ":3000")
 	c.Secret = GetOrDefault("JWT_SECRET", "dev-secret")
 	c.DbPath = GetOrDefault("DATABASE_URL", "")
 }

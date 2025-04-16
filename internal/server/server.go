@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -10,12 +11,19 @@ import (
 	"github.com/rombintu/avito-pvz-project/internal/auth"
 	"github.com/rombintu/avito-pvz-project/internal/config"
 	"github.com/rombintu/avito-pvz-project/internal/models"
+	pvz_v1 "github.com/rombintu/avito-pvz-project/internal/proto"
 	"github.com/rombintu/avito-pvz-project/internal/storage"
 	"github.com/rombintu/avito-pvz-project/internal/storage/drivers"
-	"github.com/rombintu/avito-pvz-project/lib/middleware"
+	"github.com/rombintu/avito-pvz-project/pkg/middleware"
+	"google.golang.org/grpc"
+)
+
+const (
+	TCP = "tcp"
 )
 
 type Server struct {
+	pvz_v1.UnimplementedPVZServiceServer
 	router  *gin.Engine
 	storage storage.Storage
 	config  config.Config
@@ -37,6 +45,16 @@ func NewServer(opts ServerOpts) *Server {
 func (s *Server) Run(addr string) error {
 	s.SetupRoutes()
 	return s.router.Run(addr)
+}
+
+func (s *Server) RunGRPC(addr string) error {
+	listen, err := net.Listen(TCP, addr)
+	if err != nil {
+		return err
+	}
+	service := grpc.NewServer()
+	pvz_v1.RegisterPVZServiceServer(service, s)
+	return service.Serve(listen)
 }
 
 func (s *Server) SetupRoutes() {

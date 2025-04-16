@@ -48,3 +48,23 @@ func ValidateToken(tokenString, secret string) (*Claims, error) {
 
 	return nil, errors.New("invalid token")
 }
+
+func GenerateTokenWithExpiry(userID string, role Role, secret string, expiry time.Duration) (string, error) {
+	if userID == "" {
+		return "", errors.New("user ID cannot be empty")
+	}
+	if secret == "" {
+		return "", errors.New("secret cannot be empty")
+	}
+
+	claims := &Claims{
+		UserID: userID,
+		Role:   role,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(expiry).Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
+}
