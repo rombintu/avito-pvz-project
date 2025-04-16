@@ -68,6 +68,7 @@ func TestDummyLogin(t *testing.T) {
 		{"Valid employee", "employee", http.StatusOK},
 		{"Valid moderator", "moderator", http.StatusOK},
 		{"Invalid role", "admin", http.StatusBadRequest},
+		{"Empty role", "", http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -87,18 +88,22 @@ func TestDummyLogin(t *testing.T) {
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(t, err)
 				assert.NotEmpty(t, response["token"])
+			} else {
+				var response map[string]string
+				json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NotEmpty(t, response["error"])
 			}
 		})
 	}
 }
 
 func TestRegister(t *testing.T) {
-	srv, mockStorage, _, _ := setupTest(t)
+	srv, _, _, _ := setupTest(t)
 
 	tests := []struct {
 		name         string
 		body         map[string]interface{}
-		mockSetup    func()
+		mockSetup    func(*mocks.MockStorage)
 		wantStatus   int
 		wantErrorMsg string
 	}{
@@ -109,8 +114,8 @@ func TestRegister(t *testing.T) {
 				"password": "password123",
 				"role":     "employee",
 			},
-			func() {
-				mockStorage.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(nil)
+			func(m *mocks.MockStorage) {
+				m.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(nil)
 			},
 			http.StatusCreated,
 			"",
@@ -122,17 +127,43 @@ func TestRegister(t *testing.T) {
 				"password": "password123",
 				"role":     "moderator",
 			},
-			func() {
-				mockStorage.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(drivers.ErrDuplicateEmail)
+			func(m *mocks.MockStorage) {
+				m.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(drivers.ErrDuplicateEmail)
 			},
 			http.StatusConflict,
 			"email already exists",
+		},
+		{
+			"Invalid role",
+			map[string]interface{}{
+				"email":    "test@example.com",
+				"password": "password123",
+				"role":     "invalid",
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"invalid role",
+		},
+		{
+			"Missing email",
+			map[string]interface{}{
+				"password": "password123",
+				"role":     "employee",
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"email is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.mockSetup()
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
 			jsonBody, _ := json.Marshal(tt.body)
 
@@ -154,19 +185,19 @@ func TestRegister(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	srv, mockStorage, _, _ := setupTest(t)
+	srv, _, _, _ := setupTest(t)
 
 	testUser := &models.User{
 		ID:       uuid.NewString(),
 		Email:    "test@example.com",
-		Password: "correct-password",
+		Password: "$2a$10$somehashedpassword", // bcrypt hash for "correct-password"
 		Role:     "employee",
 	}
 
 	tests := []struct {
 		name         string
 		body         map[string]string
-		mockSetup    func()
+		mockSetup    func(*mocks.MockStorage)
 		wantStatus   int
 		wantErrorMsg string
 	}{
@@ -176,8 +207,8 @@ func TestLogin(t *testing.T) {
 				"email":    "test@example.com",
 				"password": "correct-password",
 			},
-			func() {
-				mockStorage.EXPECT().GetUserByEmail(gomock.Any(), "test@example.com").Return(testUser, nil)
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetUserByEmail(gomock.Any(), "test@example.com").Return(testUser, nil)
 			},
 			http.StatusOK,
 			"",
@@ -188,17 +219,43 @@ func TestLogin(t *testing.T) {
 				"email":    "test@example.com",
 				"password": "wrong-password",
 			},
-			func() {
-				mockStorage.EXPECT().GetUserByEmail(gomock.Any(), "test@example.com").Return(testUser, nil)
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetUserByEmail(gomock.Any(), "test@example.com").Return(testUser, nil)
 			},
 			http.StatusUnauthorized,
 			"invalid credentials",
+		},
+		{
+			"User not found",
+			map[string]string{
+				"email":    "notfound@example.com",
+				"password": "password",
+			},
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetUserByEmail(gomock.Any(), "notfound@example.com").Return(nil, drivers.ErrNotFound)
+			},
+			http.StatusUnauthorized,
+			"invalid credentials",
+		},
+		{
+			"Missing email",
+			map[string]string{
+				"password": "password",
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"email is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.mockSetup()
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
 			jsonBody, _ := json.Marshal(tt.body)
 
@@ -214,6 +271,11 @@ func TestLogin(t *testing.T) {
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(t, err)
 				assert.NotEmpty(t, response["token"])
+			} else if tt.wantErrorMsg != "" {
+				var response map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Contains(t, response["error"], tt.wantErrorMsg)
 			}
 		})
 	}
@@ -222,67 +284,89 @@ func TestLogin(t *testing.T) {
 func TestCreatePVZ(t *testing.T) {
 	srv, _, moderatorToken, employeeToken := setupTest(t)
 
-	t.Run("Success - moderator", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-
-		mockStorage := mocks.NewMockStorage(ctrl)
-		srv.storage = mockStorage // Подменяем хранилище на новый мок
-
-		pvz := models.PVZ{
-			ID:               uuid.NewString(),
-			RegistrationDate: time.Now(),
-			City:             "Москва",
-		}
-
-		mockStorage.EXPECT().CreatePVZ(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, p *models.PVZ) error {
-				assert.Equal(t, pvz.City, p.City)
-				return nil
+	tests := []struct {
+		name         string
+		token        string
+		body         interface{}
+		mockSetup    func(*mocks.MockStorage)
+		wantStatus   int
+		wantErrorMsg string
+	}{
+		{
+			"Success - moderator",
+			moderatorToken,
+			models.PVZ{
+				City: "Москва",
 			},
-		).Times(1) // Ожидаем ровно один вызов
+			func(m *mocks.MockStorage) {
+				m.EXPECT().CreatePVZ(gomock.Any(), gomock.Any()).Return(nil)
+			},
+			http.StatusCreated,
+			"",
+		},
+		{
+			"Forbidden - employee",
+			employeeToken,
+			models.PVZ{
+				City: "Москва",
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusForbidden,
+			"access denied",
+		},
+		{
+			"Invalid token",
+			"invalid-token",
+			models.PVZ{
+				City: "Москва",
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusUnauthorized,
+			"invalid token",
+		},
+		{
+			"Missing city",
+			moderatorToken,
+			map[string]interface{}{
+				"wrong_field": "Москва",
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"city is required",
+		},
+	}
 
-		jsonBody, _ := json.Marshal(pvz)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/pvz", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+moderatorToken)
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
-		srv.router.ServeHTTP(w, req)
+			jsonBody, _ := json.Marshal(tt.body)
 
-		assert.Equal(t, http.StatusCreated, w.Code)
-	})
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/pvz", bytes.NewBuffer(jsonBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+tt.token)
 
-	t.Run("Forbidden - employee", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
+			srv.router.ServeHTTP(w, req)
 
-		// Не ожидаем вызовов к хранилищу для этого теста
-		mockStorage := mocks.NewMockStorage(ctrl)
-		srv.storage = mockStorage
-
-		pvz := models.PVZ{
-			ID:               uuid.NewString(),
-			RegistrationDate: time.Now(),
-			City:             "Москва",
-		}
-
-		jsonBody, _ := json.Marshal(pvz)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/pvz", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+employeeToken)
-
-		srv.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantErrorMsg != "" {
+				var response map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Contains(t, response["error"], tt.wantErrorMsg)
+			}
+		})
+	}
 }
 
 func TestGetPVZs(t *testing.T) {
-	srv, mockStorage, moderatorToken, employeeToken := setupTest(t)
+	srv, _, moderatorToken, employeeToken := setupTest(t)
 
 	testPVZs := []*models.PVZ{
 		{
@@ -290,158 +374,434 @@ func TestGetPVZs(t *testing.T) {
 			RegistrationDate: time.Now(),
 			City:             "Москва",
 		},
+		{
+			ID:               uuid.NewString(),
+			RegistrationDate: time.Now().Add(-24 * time.Hour),
+			City:             "Санкт-Петербург",
+		},
 	}
 
-	t.Run("Success - moderator", func(t *testing.T) {
-		mockStorage.EXPECT().GetPVZs(gomock.Any(), gomock.Any()).Return(testPVZs, nil)
+	tests := []struct {
+		name       string
+		token      string
+		mockSetup  func(*mocks.MockStorage)
+		wantStatus int
+		wantCount  int
+	}{
+		{
+			"Success - moderator",
+			moderatorToken,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetPVZs(gomock.Any(), gomock.Any()).Return(testPVZs, nil)
+			},
+			http.StatusOK,
+			2,
+		},
+		{
+			"Success - employee",
+			employeeToken,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetPVZs(gomock.Any(), gomock.Any()).Return(testPVZs, nil)
+			},
+			http.StatusOK,
+			2,
+		},
+		{
+			"Empty result",
+			moderatorToken,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetPVZs(gomock.Any(), gomock.Any()).Return([]*models.PVZ{}, nil)
+			},
+			http.StatusOK,
+			0,
+		},
+		{
+			"Database error",
+			moderatorToken,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetPVZs(gomock.Any(), gomock.Any()).Return(nil, assert.AnError)
+			},
+			http.StatusInternalServerError,
+			0,
+		},
+	}
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/pvz", nil)
-		req.Header.Set("Authorization", "Bearer "+moderatorToken)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-		srv.router.ServeHTTP(w, req)
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/pvz", nil)
+			req.Header.Set("Authorization", "Bearer "+tt.token)
 
-	t.Run("Success - employee", func(t *testing.T) {
-		mockStorage.EXPECT().GetPVZs(gomock.Any(), gomock.Any()).Return(testPVZs, nil)
+			srv.router.ServeHTTP(w, req)
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/pvz", nil)
-		req.Header.Set("Authorization", "Bearer "+employeeToken)
-
-		srv.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantStatus == http.StatusOK {
+				var response []models.PVZ
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantCount, len(response))
+			}
+		})
+	}
 }
 
 func TestCreateReception(t *testing.T) {
-	srv, mockStorage, _, employeeToken := setupTest(t)
+	srv, _, _, employeeToken := setupTest(t)
 
-	t.Run("Success", func(t *testing.T) {
-		pvzID := uuid.NewString()
-		body := map[string]string{"pvzId": pvzID}
-
-		mockStorage.EXPECT().CreateReception(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, r *models.Reception) error {
-				assert.Equal(t, pvzID, r.PVZID)
-				assert.Equal(t, "in_progress", r.Status)
-				return nil
+	tests := []struct {
+		name         string
+		token        string
+		body         map[string]string
+		mockSetup    func(*mocks.MockStorage)
+		wantStatus   int
+		wantErrorMsg string
+	}{
+		{
+			"Success",
+			employeeToken,
+			map[string]string{"pvzId": uuid.NewString()},
+			func(m *mocks.MockStorage) {
+				m.EXPECT().CreateReception(gomock.Any(), gomock.Any()).Return(nil)
 			},
-		)
+			http.StatusCreated,
+			"",
+		},
+		{
+			"Missing pvzId",
+			employeeToken,
+			map[string]string{},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"pvzId is required",
+		},
+		{
+			"Invalid pvzId",
+			employeeToken,
+			map[string]string{"pvzId": "invalid"},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"invalid pvzId",
+		},
+		{
+			"Database error",
+			employeeToken,
+			map[string]string{"pvzId": uuid.NewString()},
+			func(m *mocks.MockStorage) {
+				m.EXPECT().CreateReception(gomock.Any(), gomock.Any()).Return(assert.AnError)
+			},
+			http.StatusInternalServerError,
+			"failed to create reception",
+		},
+	}
 
-		jsonBody, _ := json.Marshal(body)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/receptions", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+employeeToken)
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
-		srv.router.ServeHTTP(w, req)
+			jsonBody, _ := json.Marshal(tt.body)
 
-		assert.Equal(t, http.StatusCreated, w.Code)
-	})
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/receptions", bytes.NewBuffer(jsonBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+
+			srv.router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantErrorMsg != "" {
+				var response map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Contains(t, response["error"], tt.wantErrorMsg)
+			}
+		})
+	}
 }
 
 func TestAddProduct(t *testing.T) {
-	srv, mockStorage, _, employeeToken := setupTest(t)
+	srv, _, _, employeeToken := setupTest(t)
 
-	t.Run("Success", func(t *testing.T) {
-		pvzID := uuid.NewString()
-		receptionID := uuid.NewString()
-		productType := "электроника"
+	validPVZID := uuid.NewString()
+	validReception := &models.Reception{
+		ID:       uuid.NewString(),
+		PVZID:    validPVZID,
+		Status:   "in_progress",
+		DateTime: time.Now(),
+	}
 
-		body := map[string]string{
-			"type":  productType,
-			"pvzId": pvzID,
-		}
-
-		mockStorage.EXPECT().GetOpenReception(gomock.Any(), pvzID).Return(&models.Reception{
-			ID:       receptionID,
-			PVZID:    pvzID,
-			Status:   "in_progress",
-			DateTime: time.Now(),
-		}, nil)
-
-		mockStorage.EXPECT().AddProduct(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, p *models.Product) error {
-				assert.Equal(t, productType, p.Type)
-				assert.Equal(t, receptionID, p.ReceptionID)
-				return nil
+	tests := []struct {
+		name         string
+		token        string
+		body         map[string]string
+		mockSetup    func(*mocks.MockStorage)
+		wantStatus   int
+		wantErrorMsg string
+	}{
+		{
+			"Success",
+			employeeToken,
+			map[string]string{
+				"type":  "электроника",
+				"pvzId": validPVZID,
 			},
-		)
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().AddProduct(gomock.Any(), gomock.Any()).Return(nil)
+			},
+			http.StatusCreated,
+			"",
+		},
+		{
+			"No open reception",
+			employeeToken,
+			map[string]string{
+				"type":  "электроника",
+				"pvzId": validPVZID,
+			},
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(nil, drivers.ErrNotFound)
+			},
+			http.StatusBadRequest,
+			"no open reception",
+		},
+		{
+			"Missing type",
+			employeeToken,
+			map[string]string{
+				"pvzId": validPVZID,
+			},
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"type is required",
+		},
+		{
+			"Database error",
+			employeeToken,
+			map[string]string{
+				"type":  "электроника",
+				"pvzId": validPVZID,
+			},
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().AddProduct(gomock.Any(), gomock.Any()).Return(assert.AnError)
+			},
+			http.StatusInternalServerError,
+			"failed to add product",
+		},
+	}
 
-		jsonBody, _ := json.Marshal(body)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/products", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+employeeToken)
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
-		srv.router.ServeHTTP(w, req)
+			jsonBody, _ := json.Marshal(tt.body)
 
-		assert.Equal(t, http.StatusCreated, w.Code)
-	})
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/products", bytes.NewBuffer(jsonBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+
+			srv.router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantErrorMsg != "" {
+				var response map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Contains(t, response["error"], tt.wantErrorMsg)
+			}
+		})
+	}
 }
 
 func TestCloseLastReception(t *testing.T) {
-	srv, mockStorage, _, employeeToken := setupTest(t)
+	srv, _, _, employeeToken := setupTest(t)
 
-	t.Run("Success", func(t *testing.T) {
-		pvzID := uuid.NewString()
-		receptionID := uuid.NewString()
+	validPVZID := uuid.NewString()
+	validReception := &models.Reception{
+		ID:     uuid.NewString(),
+		PVZID:  validPVZID,
+		Status: "in_progress",
+	}
 
-		mockStorage.EXPECT().GetOpenReception(gomock.Any(), pvzID).Return(&models.Reception{
-			ID:     receptionID,
-			PVZID:  pvzID,
-			Status: "in_progress",
-		}, nil)
+	tests := []struct {
+		name         string
+		pvzID        string
+		mockSetup    func(*mocks.MockStorage)
+		wantStatus   int
+		wantErrorMsg string
+	}{
+		{
+			"Success",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().CloseReception(gomock.Any(), validReception.ID).Return(nil)
+			},
+			http.StatusOK,
+			"",
+		},
+		{
+			"No open reception",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(nil, drivers.ErrNotFound)
+			},
+			http.StatusBadRequest,
+			"no open reception",
+		},
+		{
+			"Invalid PVZ ID",
+			"invalid",
+			func(m *mocks.MockStorage) {},
+			http.StatusBadRequest,
+			"invalid pvzId",
+		},
+		{
+			"Database error",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().CloseReception(gomock.Any(), validReception.ID).Return(assert.AnError)
+			},
+			http.StatusInternalServerError,
+			"failed to close reception",
+		},
+	}
 
-		mockStorage.EXPECT().CloseReception(gomock.Any(), receptionID).Return(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/pvz/"+pvzID+"/close_last_reception", nil)
-		req.Header.Set("Authorization", "Bearer "+employeeToken)
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
-		srv.router.ServeHTTP(w, req)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/pvz/"+tt.pvzID+"/close_last_reception", nil)
+			req.Header.Set("Authorization", "Bearer "+employeeToken)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
+			srv.router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantErrorMsg != "" {
+				var response map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Contains(t, response["error"], tt.wantErrorMsg)
+			}
+		})
+	}
 }
 
 func TestDeleteLastProduct(t *testing.T) {
-	srv, mockStorage, _, employeeToken := setupTest(t)
+	srv, _, _, employeeToken := setupTest(t)
 
-	t.Run("Success", func(t *testing.T) {
-		pvzID := uuid.NewString()
-		receptionID := uuid.NewString()
-		productID := uuid.NewString()
+	validPVZID := uuid.NewString()
+	validReception := &models.Reception{
+		ID:     uuid.NewString(),
+		PVZID:  validPVZID,
+		Status: "in_progress",
+	}
+	validProduct := &models.Product{
+		ID:          uuid.NewString(),
+		ReceptionID: validReception.ID,
+		Type:        "электроника",
+		DateTime:    time.Now(),
+	}
 
-		mockStorage.EXPECT().GetOpenReception(gomock.Any(), pvzID).Return(&models.Reception{
-			ID:     receptionID,
-			PVZID:  pvzID,
-			Status: "in_progress",
-		}, nil)
+	tests := []struct {
+		name         string
+		pvzID        string
+		mockSetup    func(*mocks.MockStorage)
+		wantStatus   int
+		wantErrorMsg string
+	}{
+		{
+			"Success",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().GetLastProduct(gomock.Any(), validReception.ID).Return(validProduct, nil)
+				m.EXPECT().DeleteProduct(gomock.Any(), validProduct.ID).Return(nil)
+			},
+			http.StatusOK,
+			"",
+		},
+		{
+			"No open reception",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(nil, drivers.ErrNotFound)
+			},
+			http.StatusBadRequest,
+			"no open reception",
+		},
+		{
+			"No products",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().GetLastProduct(gomock.Any(), validReception.ID).Return(nil, drivers.ErrNotFound)
+			},
+			http.StatusBadRequest,
+			"no products to delete",
+		},
+		{
+			"Database error",
+			validPVZID,
+			func(m *mocks.MockStorage) {
+				m.EXPECT().GetOpenReception(gomock.Any(), validPVZID).Return(validReception, nil)
+				m.EXPECT().GetLastProduct(gomock.Any(), validReception.ID).Return(validProduct, nil)
+				m.EXPECT().DeleteProduct(gomock.Any(), validProduct.ID).Return(assert.AnError)
+			},
+			http.StatusInternalServerError,
+			"failed to delete product",
+		},
+	}
 
-		mockStorage.EXPECT().GetLastProduct(gomock.Any(), receptionID).Return(&models.Product{
-			ID:          productID,
-			ReceptionID: receptionID,
-			Type:        "электроника",
-			DateTime:    time.Now(),
-		}, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-		mockStorage.EXPECT().DeleteProduct(gomock.Any(), productID).Return(nil)
+			mockStorage := mocks.NewMockStorage(ctrl)
+			tt.mockSetup(mockStorage)
+			srv.storage = mockStorage
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/pvz/"+pvzID+"/delete_last_product", nil)
-		req.Header.Set("Authorization", "Bearer "+employeeToken)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/pvz/"+tt.pvzID+"/delete_last_product", nil)
+			req.Header.Set("Authorization", "Bearer "+employeeToken)
 
-		srv.router.ServeHTTP(w, req)
+			srv.router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantErrorMsg != "" {
+				var response map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Contains(t, response["error"], tt.wantErrorMsg)
+			}
+		})
+	}
 }
 
 func TestNewServer(t *testing.T) {
