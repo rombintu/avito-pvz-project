@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/rombintu/avito-pvz-project/internal/storage/drivers"
 	"github.com/rombintu/avito-pvz-project/pkg/middleware"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -54,6 +57,7 @@ func (s *Server) RunGRPC(addr string) error {
 	}
 	service := grpc.NewServer()
 	pvz_v1.RegisterPVZServiceServer(service, s)
+	slog.Info("Listening and serving GRPC", slog.String("addr", addr))
 	return service.Serve(listen)
 }
 
@@ -394,4 +398,23 @@ func (s *Server) deleteLastProduct(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "product deleted successfully"})
+}
+
+// GRPC
+func (s *Server) GetPVZList(ctx context.Context, in *pvz_v1.GetPVZListRequest) (*pvz_v1.GetPVZListResponse, error) {
+	pvzs, err := s.storage.GetPVZs(ctx, models.PVZFilter{})
+	if err != nil {
+		return nil, err
+	}
+
+	var r pvz_v1.GetPVZListResponse
+
+	for _, p := range pvzs {
+		r.Pvzs = append(r.Pvzs, &pvz_v1.PVZ{
+			Id:               p.ID,
+			City:             p.City,
+			RegistrationDate: timestamppb.New(p.RegistrationDate),
+		})
+	}
+	return &r, nil
 }

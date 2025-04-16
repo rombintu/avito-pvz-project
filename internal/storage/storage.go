@@ -30,17 +30,22 @@ type Storage interface {
 	AddProduct(ctx context.Context, product *models.Product) error
 	GetLastProduct(ctx context.Context, receptionID string) (*models.Product, error)
 	DeleteProduct(ctx context.Context, productID string) error
+
+	// Automigrate and etc.
+	Migrate(mpath string) error
+	CleanUp(mpath string) error
 }
 
 type StorageOpts struct {
 	Database   *sql.DB
 	DriverType string
+	DriverPath string
 }
 
 func NewStorage(opts StorageOpts) Storage {
 	switch opts.DriverType {
 	case PgxDriverType:
-		return drivers.NewPostgresStorage(opts.Database)
+		return drivers.NewPostgresStorage(opts.Database, opts.DriverPath)
 	}
 	return nil
 }

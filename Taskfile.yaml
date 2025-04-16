@@ -50,6 +50,11 @@ tasks:
       - go test ./... -coverprofile profiles/dry_cover.out && egrep -v "proto|main|mocks" profiles/dry_cover.out > profiles/cover.out && go tool cover -func=profiles/cover.out
       - task: cover-gen-svg
 
+  cover-noskip:
+    cmds:
+      - go test ./... -coverprofile profiles/cover.out && go tool cover -func=profiles/cover.out
+      - task: cover-gen-svg
+
   protogen:
     cmds:
       - protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/proto/pvz.proto

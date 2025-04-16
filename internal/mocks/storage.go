@@ -49,6 +49,20 @@ func (mr *MockStorageMockRecorder) AddProduct(arg0, arg1 interface{}) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddProduct", reflect.TypeOf((*MockStorage)(nil).AddProduct), arg0, arg1)
 }
 
+// CleanUp mocks base method.
+func (m *MockStorage) CleanUp(arg0 string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CleanUp", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CleanUp indicates an expected call of CleanUp.
+func (mr *MockStorageMockRecorder) CleanUp(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanUp", reflect.TypeOf((*MockStorage)(nil).CleanUp), arg0)
+}
+
 // CloseReception mocks base method.
 func (m *MockStorage) CloseReception(arg0 context.Context, arg1 string) error {
 	m.ctrl.T.Helper()
@@ -177,4 +191,18 @@ func (m *MockStorage) GetUserByEmail(arg0 context.Context, arg1 string) (*models
 func (mr *MockStorageMockRecorder) GetUserByEmail(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserByEmail", reflect.TypeOf((*MockStorage)(nil).GetUserByEmail), arg0, arg1)
+}
+
+// Migrate mocks base method.
+func (m *MockStorage) Migrate(arg0 string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Migrate", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Migrate indicates an expected call of Migrate.
+func (mr *MockStorageMockRecorder) Migrate(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Migrate", reflect.TypeOf((*MockStorage)(nil).Migrate), arg0)
 }

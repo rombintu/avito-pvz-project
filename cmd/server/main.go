@@ -23,7 +23,13 @@ func main() {
 	defer db.Close()
 
 	store := storage.NewStorage(storage.StorageOpts{
-		Database: db, DriverType: storage.PgxDriverType})
+		Database:   db,
+		DriverType: storage.PgxDriverType,
+		DriverPath: cfg.DbPath,
+	})
+	if err := store.Migrate("file://migrations"); err != nil {
+		slog.Warn(err.Error())
+	}
 	server := server.NewServer(server.ServerOpts{
 		Storage: store,
 		// Передаем данные, тк потом не меняем конфигурацию

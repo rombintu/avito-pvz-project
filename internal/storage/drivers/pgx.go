@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang-migrate/migrate"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lib/pq"
 	"github.com/rombintu/avito-pvz-project/internal/models"
 )
@@ -33,11 +35,12 @@ type Executor interface {
 
 // PostgresStorage implements storage.Storage with transaction support
 type PostgresStorage struct {
-	db *sql.DB
+	db  *sql.DB
+	url string
 }
 
-func NewPostgresStorage(db *sql.DB) *PostgresStorage {
-	return &PostgresStorage{db: db}
+func NewPostgresStorage(db *sql.DB, url string) *PostgresStorage {
+	return &PostgresStorage{db: db, url: url}
 }
 
 // getExecutor returns current transaction or main DB
@@ -343,12 +346,26 @@ func (s *PostgresStorage) DeleteProduct(ctx context.Context, productID string) e
 	return nil
 }
 
-func (s *PostgresStorage) autoDefaultMigrate(mpath string) error {
+// Не все драйвера имеют могут иметь этот метод
+func (s *PostgresStorage) Migrate(mpath string) error {
 	migr, err := migrate.New(
-		fmt.Sprintf("file://%s", mpath),
+		mpath,
+		s.url,
 	)
 	if err != nil {
 		return err
 	}
 	return migr.Up()
+}
+
+// For intergraion tests
+func (s *PostgresStorage) CleanUp(mpath string) error {
+	migr, err := migrate.New(
+		mpath,
+		s.url,
+	)
+	if err != nil {
+		return err
+	}
+	return migr.Drop()
 }

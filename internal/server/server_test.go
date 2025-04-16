@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/rombintu/avito-pvz-project/internal/auth"
@@ -24,7 +27,9 @@ import (
 	"github.com/rombintu/avito-pvz-project/internal/storage"
 	"github.com/rombintu/avito-pvz-project/internal/storage/drivers"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func setupTest(t *testing.T) (*Server, *mocks.MockStorage, string, string) {
@@ -563,6 +568,120 @@ func TestSetupRoutes(t *testing.T) {
 	assert.NotEmpty(t, routes)
 }
 
+type mockStorage struct {
+	storage.Storage
+	pvzs []*models.PVZ
+	err  error
+}
+
+func (m *mockStorage) GetPVZs(ctx context.Context, filter models.PVZFilter) ([]*models.PVZ, error) {
+	return m.pvzs, m.err
+}
+
+func TestGetPVZList(t *testing.T) {
+	now := time.Now()
+	zeroTime := time.Time{}
+
+	tests := []struct {
+		name    string
+		store   *mockStorage
+		want    *pvz_v1.GetPVZListResponse
+		wantErr bool
+	}{
+		{
+			name: "success case",
+			store: &mockStorage{
+				pvzs: []*models.PVZ{
+					{
+						ID:               "1",
+						City:             "Moscow",
+						RegistrationDate: now,
+					},
+				},
+			},
+			want: &pvz_v1.GetPVZListResponse{
+				Pvzs: []*pvz_v1.PVZ{
+					{
+						Id:               "1",
+						City:             "Moscow",
+						RegistrationDate: timestamppb.New(now),
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty result",
+			store: &mockStorage{
+				pvzs: []*models.PVZ{},
+			},
+			want: &pvz_v1.GetPVZListResponse{
+				Pvzs: []*pvz_v1.PVZ{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "storage error",
+			store: &mockStorage{
+				err: assert.AnError,
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "zero time",
+			store: &mockStorage{
+				pvzs: []*models.PVZ{
+					{
+						ID:               "2",
+						City:             "SPb",
+						RegistrationDate: zeroTime,
+					},
+				},
+			},
+			want: &pvz_v1.GetPVZListResponse{
+				Pvzs: []*pvz_v1.PVZ{
+					{
+						Id:               "2",
+						City:             "SPb",
+						RegistrationDate: timestamppb.New(zeroTime), // Ожидаем Timestamp для нулевого времени
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewServer(ServerOpts{Storage: tt.store})
+			got, err := srv.GetPVZList(context.Background(), &pvz_v1.GetPVZListRequest{})
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, len(tt.want.Pvzs), len(got.Pvzs))
+
+			for i, wantPVZ := range tt.want.Pvzs {
+				gotPVZ := got.Pvzs[i]
+				assert.Equal(t, wantPVZ.Id, gotPVZ.Id)
+				assert.Equal(t, wantPVZ.City, gotPVZ.City)
+
+				require.NotNil(t, gotPVZ.RegistrationDate)
+				assert.True(t,
+					wantPVZ.RegistrationDate.AsTime().Equal(gotPVZ.RegistrationDate.AsTime()),
+					"expected: %v, got: %v",
+					wantPVZ.RegistrationDate.AsTime(),
+					gotPVZ.RegistrationDate.AsTime(),
+				)
+			}
+		})
+	}
+}
+
 func TestGRPCServiceRegistration(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -587,17 +706,47 @@ func TestGRPCServiceRegistration(t *testing.T) {
 	assert.True(t, ok, "PVZService not registered")
 }
 
-func TestServerIntegration(t *testing.T) {
-	// Setup test database
-	db, err := sql.Open(storage.PgxDriverType, "postgres://admin:admin@localhost:5432/pvztest?sslmode=disable")
+const (
+	testDBURL      = "postgres://admin:admin@localhost:5432/pvztest?sslmode=disable"
+	migrationsPath = "file://../../migrations"
+)
+
+func setupTestDB(t *testing.T) (*sql.DB, func()) {
+	// Создаем подключение к тестовой БД
+	db, err := sql.Open(storage.PgxDriverType, testDBURL)
 	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
+		t.Fatalf("Failed to connect to test database: %v", err)
 	}
-	defer db.Close()
 
-	// Create storage
-	store := drivers.NewPostgresStorage(db)
+	// Применяем миграции
+	m, err := migrate.New(migrationsPath, testDBURL)
+	if err != nil {
+		t.Fatalf("Failed to create migrate instance: %v", err)
+	}
 
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("Failed to apply migrations: %v", err)
+	}
+
+	// Функция для очистки после тестов
+	cleanup := func() {
+		// Откатываем миграции
+		if err := m.Drop(); err != nil && err != migrate.ErrNoChange {
+			t.Logf("Warning: failed to rollback migrations: %v", err)
+		}
+		db.Close()
+	}
+
+	return db, cleanup
+}
+
+func TestServerIntegration(t *testing.T) {
+	// Настраиваем тестовую БД
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Создаем хранилище
+	store := drivers.NewPostgresStorage(db, testDBURL)
 	// Create test config
 	cfg := config.Config{
 		Secret: "test-secret",
@@ -651,7 +800,7 @@ func TestServerIntegration(t *testing.T) {
 	// Test PVZ operations
 	t.Run("PVZ operations", func(t *testing.T) {
 		// Get moderator token
-		moderatorToken := getAuthToken(t, srv, "moderator")
+		moderatorToken := getAuthToken(srv, "moderator")
 
 		// Create PVZ
 		pvzData := models.PVZ{
@@ -689,10 +838,10 @@ func TestServerIntegration(t *testing.T) {
 	// Test reception and product flow
 	t.Run("Reception and product flow", func(t *testing.T) {
 		// Get employee token
-		employeeToken := getAuthToken(t, srv, "employee")
+		employeeToken := getAuthToken(srv, "employee")
 
 		// Create PVZ (need moderator token)
-		moderatorToken := getAuthToken(t, srv, "moderator")
+		moderatorToken := getAuthToken(srv, "moderator")
 		pvzData := models.PVZ{City: "Санкт-Петербург"}
 		pvzBody, _ := json.Marshal(pvzData)
 
@@ -762,7 +911,7 @@ func TestServerIntegration(t *testing.T) {
 	// Test authorization
 	t.Run("Authorization checks", func(t *testing.T) {
 		// Get employee token
-		employeeToken := getAuthToken(t, srv, "employee")
+		employeeToken := getAuthToken(srv, "employee")
 
 		// Try to create PVZ as employee (should fail)
 		pvzData := models.PVZ{City: "Казань"}
@@ -779,7 +928,7 @@ func TestServerIntegration(t *testing.T) {
 }
 
 // Helper function to get auth token
-func getAuthToken(t *testing.T, srv *Server, role string) string {
+func getAuthToken(srv *Server, role string) string {
 	data := map[string]string{"role": role}
 	body, _ := json.Marshal(data)
 

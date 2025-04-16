@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/lib/pq"
 	"github.com/rombintu/avito-pvz-project/internal/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func TestPostgresStorage(t *testing.T) {
@@ -20,7 +24,7 @@ func TestPostgresStorage(t *testing.T) {
 	}
 	defer db.Close()
 
-	storage := NewPostgresStorage(db)
+	storage := NewPostgresStorage(db, "test")
 
 	t.Run("WithTransaction success", func(t *testing.T) {
 		mock.ExpectBegin()
@@ -252,4 +256,159 @@ func TestPostgresStorage(t *testing.T) {
 		assert.Equal(t, ErrNotFound, err)
 	})
 
+}
+
+func setupTestDB(t *testing.T) (string, func()) {
+	ctx := context.Background()
+
+	req := testcontainers.ContainerRequest{
+		Image:        "postgres:13-alpine",
+		ExposedPorts: []string{"5432/tcp"},
+		Env: map[string]string{
+			"POSTGRES_USER":     "test",
+			"POSTGRES_PASSWORD": "test",
+			"POSTGRES_DB":       "test",
+		},
+		WaitingFor: wait.ForLog("database system is ready to accept connections"),
+	}
+
+	pgContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	require.NoError(t, err)
+
+	host, err := pgContainer.Host(ctx)
+	require.NoError(t, err)
+
+	port, err := pgContainer.MappedPort(ctx, "5432")
+	require.NoError(t, err)
+
+	connStr := "postgres://test:test@" + host + ":" + port.Port() + "/test?sslmode=disable"
+
+	return connStr, func() {
+		_ = pgContainer.Terminate(ctx)
+	}
+}
+
+func TestPostgresStorage_Migrate(t *testing.T) {
+	connStr, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Создаем временную директорию для миграций
+	tmpDir, err := os.MkdirTemp("", "migrations")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Создаем тестовые файлы миграций
+	migrations := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "1_init.up.sql",
+			content: `CREATE TABLE IF NOT EXISTS test_table (id SERIAL PRIMARY KEY);`,
+		},
+		{
+			name:    "1_init.down.sql",
+			content: `DROP TABLE IF EXISTS test_table;`,
+		},
+	}
+
+	for _, m := range migrations {
+		err = os.WriteFile(tmpDir+"/"+m.name, []byte(m.content), 0644)
+		require.NoError(t, err)
+	}
+
+	// Создаем хранилище
+	store, err := storage.NewPostgresStorage(connStr)
+	require.NoError(t, err)
+
+	t.Run("successful migration", func(t *testing.T) {
+		err = store.Migrate("file://" + tmpDir)
+		assert.NoError(t, err)
+
+		// Проверяем, что миграция применилась
+		db, err := store.DB()
+		require.NoError(t, err)
+
+		var exists bool
+		err = db.QueryRow(`SELECT EXISTS (
+			SELECT FROM pg_tables
+			WHERE schemaname = 'public' AND tablename = 'test_table'
+		)`).Scan(&exists)
+		assert.NoError(t, err)
+		assert.True(t, exists)
+	})
+
+	t.Run("invalid migration path", func(t *testing.T) {
+		err = store.Migrate("invalid_path")
+		assert.Error(t, err)
+	})
+}
+
+func TestPostgresStorage_CleanUp(t *testing.T) {
+	connStr, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Создаем временную директорию для миграций
+	tmpDir, err := os.MkdirTemp("", "migrations")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Создаем тестовые файлы миграций
+	migrations := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "1_init.up.sql",
+			content: `CREATE TABLE IF NOT EXISTS test_table (id SERIAL PRIMARY KEY);`,
+		},
+		{
+			name:    "1_init.down.sql",
+			content: `DROP TABLE IF EXISTS test_table;`,
+		},
+	}
+
+	for _, m := range migrations {
+		err = os.WriteFile(tmpDir+"/"+m.name, []byte(m.content), 0644)
+		require.NoError(t, err)
+	}
+
+	// Создаем хранилище
+	store, err := NewPostgresStorage(connStr)
+	require.NoError(t, err)
+
+	t.Run("successful cleanup", func(t *testing.T) {
+		// Сначала применяем миграции
+		err = store.Migrate("file://" + tmpDir)
+		require.NoError(t, err)
+
+		// Затем очищаем
+		err = store.CleanUp("file://" + tmpDir)
+		assert.NoError(t, err)
+
+		// Проверяем, что таблицы удалены
+		db, err := store.DB()
+		require.NoError(t, err)
+
+		var exists bool
+		err = db.QueryRow(`SELECT EXISTS (
+			SELECT FROM pg_tables
+			WHERE schemaname = 'public' AND tablename = 'test_table'
+		)`).Scan(&exists)
+		assert.NoError(t, err)
+		assert.False(t, exists)
+	})
+
+	t.Run("cleanup without migrations", func(t *testing.T) {
+		err = store.CleanUp("file://" + tmpDir)
+		assert.NoError(t, err)
+	})
+
+	t.Run("invalid migration path", func(t *testing.T) {
+		err = store.CleanUp("invalid_path")
+		assert.Error(t, err)
+	})
 }
