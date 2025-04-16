@@ -3,6 +3,10 @@ package main
 import (
 	"database/sql"
 	"log"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	_ "github.com/lib/pq"
 	"github.com/rombintu/avito-pvz-project/internal/config"
@@ -26,8 +30,26 @@ func main() {
 		Config: cfg,
 	})
 
-	if err := server.Run(cfg.Listen); err != nil {
-		// todo logger
-		log.Fatal(err)
-	}
+	// GRPC
+	go func() {
+		if err := server.RunGRPC(cfg.ListenGRPC); err != nil {
+			// TODO: logger
+			panic(err)
+		}
+	}()
+
+	// HTTP
+	go func() {
+		if err := server.Run(cfg.Listen); err != nil {
+			// TODO: logger
+			log.Fatal(err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
+	// Waiting for SIGINT (pkill -2) or SIGTERM
+	<-stop
+	slog.Info("shutdown server")
 }
