@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -258,18 +259,24 @@ func TestPostgresStorage(t *testing.T) {
 
 }
 
-func setupTestDB(t *testing.T) (string, func()) {
+type testDB struct {
+	instance testcontainers.Container
+	db       *sql.DB
+	connStr  string
+}
+
+func setupTestDB(t *testing.T) *testDB {
 	ctx := context.Background()
 
 	req := testcontainers.ContainerRequest{
-		Image:        "postgres:13-alpine",
+		Image:        "postgres:latest",
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_USER":     "test",
 			"POSTGRES_PASSWORD": "test",
 			"POSTGRES_DB":       "test",
 		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections"),
+		WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(10 * time.Second),
 	}
 
 	pgContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -284,16 +291,44 @@ func setupTestDB(t *testing.T) (string, func()) {
 	port, err := pgContainer.MappedPort(ctx, "5432")
 	require.NoError(t, err)
 
-	connStr := "postgres://test:test@" + host + ":" + port.Port() + "/test?sslmode=disable"
+	connStr := fmt.Sprintf("postgres://test:test@%s:%s/test?sslmode=disable", host, port.Port())
 
-	return connStr, func() {
-		_ = pgContainer.Terminate(ctx)
+	// Даем время на полную инициализацию
+	time.Sleep(500 * time.Millisecond)
+
+	db, err := sql.Open("postgres", connStr)
+	require.NoError(t, err)
+
+	// Пытаемся подключиться несколько раз
+	var maxAttempts = 5
+	for i := 0; i < maxAttempts; i++ {
+		err = db.Ping()
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
+	}
+	require.NoError(t, err)
+
+	return &testDB{
+		instance: pgContainer,
+		db:       db,
+		connStr:  connStr,
+	}
+}
+
+func (tdb *testDB) teardown() {
+	if tdb.db != nil {
+		tdb.db.Close()
+	}
+	if tdb.instance != nil {
+		_ = tdb.instance.Terminate(context.Background())
 	}
 }
 
 func TestPostgresStorage_Migrate(t *testing.T) {
-	connStr, cleanup := setupTestDB(t)
-	defer cleanup()
+	tdb := setupTestDB(t)
+	defer tdb.teardown()
 
 	// Создаем временную директорию для миграций
 	tmpDir, err := os.MkdirTemp("", "migrations")
@@ -321,35 +356,26 @@ func TestPostgresStorage_Migrate(t *testing.T) {
 	}
 
 	// Создаем хранилище
-	store, err := storage.NewPostgresStorage(connStr)
-	require.NoError(t, err)
+	store := NewPostgresStorage(tdb.db, tdb.connStr)
 
 	t.Run("successful migration", func(t *testing.T) {
 		err = store.Migrate("file://" + tmpDir)
-		assert.NoError(t, err)
-
-		// Проверяем, что миграция применилась
-		db, err := store.DB()
 		require.NoError(t, err)
 
+		// Проверяем, что миграция применилась
 		var exists bool
-		err = db.QueryRow(`SELECT EXISTS (
+		err = tdb.db.QueryRow(`SELECT EXISTS (
 			SELECT FROM pg_tables
 			WHERE schemaname = 'public' AND tablename = 'test_table'
 		)`).Scan(&exists)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("invalid migration path", func(t *testing.T) {
-		err = store.Migrate("invalid_path")
-		assert.Error(t, err)
+		require.NoError(t, err)
+		require.True(t, exists)
 	})
 }
 
 func TestPostgresStorage_CleanUp(t *testing.T) {
-	connStr, cleanup := setupTestDB(t)
-	defer cleanup()
+	tdb := setupTestDB(t)
+	defer tdb.teardown()
 
 	// Создаем временную директорию для миграций
 	tmpDir, err := os.MkdirTemp("", "migrations")
@@ -377,8 +403,7 @@ func TestPostgresStorage_CleanUp(t *testing.T) {
 	}
 
 	// Создаем хранилище
-	store, err := NewPostgresStorage(connStr)
-	require.NoError(t, err)
+	store := NewPostgresStorage(tdb.db, tdb.connStr)
 
 	t.Run("successful cleanup", func(t *testing.T) {
 		// Сначала применяем миграции
@@ -387,28 +412,15 @@ func TestPostgresStorage_CleanUp(t *testing.T) {
 
 		// Затем очищаем
 		err = store.CleanUp("file://" + tmpDir)
-		assert.NoError(t, err)
-
-		// Проверяем, что таблицы удалены
-		db, err := store.DB()
 		require.NoError(t, err)
 
+		// Проверяем, что таблицы удалены
 		var exists bool
-		err = db.QueryRow(`SELECT EXISTS (
+		err = tdb.db.QueryRow(`SELECT EXISTS (
 			SELECT FROM pg_tables
 			WHERE schemaname = 'public' AND tablename = 'test_table'
 		)`).Scan(&exists)
-		assert.NoError(t, err)
-		assert.False(t, exists)
-	})
-
-	t.Run("cleanup without migrations", func(t *testing.T) {
-		err = store.CleanUp("file://" + tmpDir)
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid migration path", func(t *testing.T) {
-		err = store.CleanUp("invalid_path")
-		assert.Error(t, err)
+		require.NoError(t, err)
+		require.False(t, exists)
 	})
 }

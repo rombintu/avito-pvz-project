@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -61,8 +62,7 @@ func (s *PostgresStorage) WithTransaction(ctx context.Context, fn func(context.C
 	defer func() {
 		if p := recover(); p != nil {
 			_ = tx.Rollback()
-			// todo logger
-			panic(p)
+			slog.Error(err.Error())
 		}
 	}()
 

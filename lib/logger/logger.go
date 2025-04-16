@@ -11,10 +11,14 @@ import (
 	"github.com/fatih/color"
 )
 
+const (
+	EnvTypeLocal string = "local"
+)
+
 func InitLogger(env string) {
 	var opts PrettyHandlerOptions
 
-	if env == "local" {
+	if env == EnvTypeLocal {
 		opts = PrettyHandlerOptions{
 			SlogOpts: slog.HandlerOptions{
 				Level: slog.LevelDebug,
