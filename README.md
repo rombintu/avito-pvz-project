@@ -174,7 +174,7 @@ cp .env.bak .env # Внесите изменения под ваше окруж�
 
 ### Настройка
 ```bash
-export DB_URL="postgres://user:pass@host:port/dbname"
+export DATABASE_URL="postgres://user:pass@host:port/dbname"
 export JWT_SECRET="ваш-секретный-ключ"
 ```
 ### Запуск
