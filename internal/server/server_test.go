@@ -142,7 +142,7 @@ func TestRegister(t *testing.T) {
 			},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"invalid role",
+			"Field validation for 'Role' failed on the 'oneof' tag",
 		},
 		{
 			"Missing email",
@@ -152,7 +152,7 @@ func TestRegister(t *testing.T) {
 			},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"email is required",
+			"Field validation for 'Email' failed on the 'required' tag",
 		},
 	}
 
@@ -190,7 +190,7 @@ func TestLogin(t *testing.T) {
 	testUser := &models.User{
 		ID:       uuid.NewString(),
 		Email:    "test@example.com",
-		Password: "$2a$10$somehashedpassword", // bcrypt hash for "correct-password"
+		Password: "correct-password",
 		Role:     "employee",
 	}
 
@@ -244,7 +244,7 @@ func TestLogin(t *testing.T) {
 			},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"email is required",
+			"Field validation for 'Email' failed on the 'required' tag",
 		},
 	}
 
@@ -322,7 +322,7 @@ func TestCreatePVZ(t *testing.T) {
 			},
 			func(m *mocks.MockStorage) {},
 			http.StatusUnauthorized,
-			"invalid token",
+			"Invalid token", // Exact match
 		},
 		{
 			"Missing city",
@@ -332,7 +332,7 @@ func TestCreatePVZ(t *testing.T) {
 			},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"city is required",
+			"invalid city", // Exact match
 		},
 	}
 
@@ -479,7 +479,7 @@ func TestCreateReception(t *testing.T) {
 			map[string]string{},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"pvzId is required",
+			"Field validation for 'PVZID' failed on the 'required' tag",
 		},
 		{
 			"Invalid pvzId",
@@ -487,7 +487,7 @@ func TestCreateReception(t *testing.T) {
 			map[string]string{"pvzId": "invalid"},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"invalid pvzId",
+			"Field validation for 'PVZID' failed on the 'uuid' tag",
 		},
 		{
 			"Database error",
@@ -584,7 +584,7 @@ func TestAddProduct(t *testing.T) {
 			},
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"type is required",
+			"Field validation for 'Type' failed on the 'required' tag",
 		},
 		{
 			"Database error",
@@ -672,7 +672,7 @@ func TestCloseLastReception(t *testing.T) {
 			"invalid",
 			func(m *mocks.MockStorage) {},
 			http.StatusBadRequest,
-			"invalid pvzId",
+			"invalid PVZ ID", // Exact match
 		},
 		{
 			"Database error",

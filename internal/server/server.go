@@ -10,8 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rombintu/avito-pvz-project/internal/auth"
 	"github.com/rombintu/avito-pvz-project/internal/config"
+	"github.com/rombintu/avito-pvz-project/internal/metrics"
 	"github.com/rombintu/avito-pvz-project/internal/models"
 	pvz_v1 "github.com/rombintu/avito-pvz-project/internal/proto"
 	"github.com/rombintu/avito-pvz-project/internal/storage"
@@ -47,6 +49,16 @@ func NewServer(opts ServerOpts) *Server {
 
 func (s *Server) Run(addr string) error {
 	s.SetupRoutes()
+
+	go func() {
+		metricsServer := &http.Server{
+			Addr:    ":9000",
+			Handler: promhttp.Handler(),
+		}
+		slog.Info("Listening and serving Prometheus", slog.String("addr", ":9000"))
+		metricsServer.ListenAndServe()
+	}()
+
 	return s.router.Run(addr)
 }
 
@@ -62,6 +74,9 @@ func (s *Server) RunGRPC(addr string) error {
 }
 
 func (s *Server) SetupRoutes() {
+	// Add Prometheus middleware
+	s.router.Use(PrometheusMiddleware())
+
 	// Public routes
 	s.router.POST("/dummyLogin", s.dummyLogin)
 	s.router.POST("/register", s.register)
@@ -121,7 +136,7 @@ func (s *Server) register(c *gin.Context) {
 	user := &models.User{
 		ID:       uuid.New().String(),
 		Email:    req.Email,
-		Password: req.Password, // Note: In production, hash the password!
+		Password: req.Password, // Note: для упрощения, без хеширования
 		Role:     req.Role,
 	}
 
@@ -213,6 +228,9 @@ func (s *Server) createPVZ(c *gin.Context) {
 		return
 	}
 
+	// After successful PVZ creation
+	metrics.PVZCreated.Inc()
+
 	c.JSON(http.StatusCreated, pvz)
 }
 
@@ -276,6 +294,9 @@ func (s *Server) createReception(c *gin.Context) {
 		return
 	}
 
+	// After successful reception creation
+	metrics.ReceptionsCreated.Inc()
+
 	c.JSON(http.StatusCreated, reception)
 }
 
@@ -319,6 +340,9 @@ func (s *Server) addProduct(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add product"})
 		return
 	}
+
+	// After successful product addition
+	metrics.ProductsAdded.Inc()
 
 	c.JSON(http.StatusCreated, product)
 }
